@@ -18,7 +18,6 @@ reactions <- c(
 model_simu <- build_simulator(reactions)
 
 
-
 # Faster Simulation -------------------------------------------------------
 # Time of simulation is 5 years = 500 time units
 TIME <- seq(from=0, to=500, length.out=700)
@@ -26,6 +25,7 @@ mTIME <- (TIME[1:699]+TIME[2:700])/2
 dT = 0.005
 
 beta_t <- function(B, b, m, T=100, p=0, MIN_TRANS=5e-3){
+  # Return the transmission signal beta_t evaluated in m
   beta_t <- B*(1+b*sin(2*pi*(m/T +p)))
   beta_t[beta_t<MIN_TRANS] <- MIN_TRANS
   
@@ -33,6 +33,9 @@ beta_t <- function(B, b, m, T=100, p=0, MIN_TRANS=5e-3){
 }
 
 rbnorm <- function(n, mean=0, std=1, min= NULL, max=NULL){
+  # Return a vector of size n which stores realizations of 
+  # a normal distribution truncated between min and max
+  
   random_vect <- rnorm(n, mean=mean, sd=std)
   
   if (is.null(min) ||  is.null(max)){
@@ -47,7 +50,8 @@ rbnorm <- function(n, mean=0, std=1, min= NULL, max=NULL){
 }
 
 simulate_dynamic <- function(params, N=100000){
-
+  # Return a simulated tree from params which stores a value for each parameters
+  
   params <- data.frame(params)
   beta_t <- beta_t(params["mean_signal",], params["amplitude",], mTIME)
   
@@ -61,7 +65,7 @@ simulate_dynamic <- function(params, N=100000){
 
   
   # Simulation of the trajectory --------------------------------------------
-
+  # capture.output is used to prevent messages to be printing
   capture.output(traj_i <- model_simu(paramValues = theta,
                                       initialStates = c(S=N-1, E=0, I=1, R=0, U=0),
                                       times = TIME,
@@ -71,9 +75,20 @@ simulate_dynamic <- function(params, N=100000){
                  file= nullfile(), type="message")
   
   if (length(traj_i)==0){
+    # if the simulation of the trajectory has failed
     return(FALSE)
   }
-
+  
+  # Filter seasonal time series ---------------------------------------------
+  X = !duplicated(round(traj_i$traj$Time,0)) # register indices where time point is not duplicated
+  P = spectrum(traj_i$traj$I[X], log='no', plot=FALSE)
+  ind = which.max(P$spec)
+  
+  if (ind != 5){
+    return(FALSE)
+  }
+  
+  # capture.output is used to prevent messages to be printing
   capture.output(tree_i <- simulate_tree(simuResults = traj_i,
                           deme = c("I", "R"),
                           root = "I",
@@ -85,21 +100,10 @@ simulate_dynamic <- function(params, N=100000){
   nb_tips <- length(tree_i$tip.label)
   if (nb_tips<60 || nb_tips>600){
     # tree_i == list(), in case of this error : 
-    #Cannot sample compartment R, the number of individuals is not sufficient.
+    # Cannot sample compartment R, the number of individuals is not sufficient.
     return(FALSE)
   }
-  
-  # Filter seasonal time series ---------------------------------------------
-  
-  # register indices where time point is not duplicated
-  X = !duplicated(traj_i$traj$Time)
-  P = spectrum(traj_i$traj$I[X], log='no', plot=FALSE)
-  ind = which.max(P$spec)
-  
-  if (ind != 5){
-    return(FALSE)
-  }
-  
+
   tree_i$node.label <- NULL
   
   return(tree_i)
@@ -108,15 +112,18 @@ simulate_dynamic <- function(params, N=100000){
 
 # Set random parameters and generate data ---------------------------------
 
-path = "/home/ivati/Documents/data_TiPS3" 
+path = "" 
 
 numCores <- detectCores()
 # print(paste("Number of cores:", numCores))
 
 generate_faster <- function(nb_data, first){
+  # Simulate nb_data random parameters and generate corresponding trees
+  # first is a boolean, if first is false, new trees are added to the existing file
+  
   params <- data.frame(
-    mean_signal = runif(nb_data, 0.3, 0.6),
-    amplitude = runif(nb_data, 0.15, 1),
+    mean_signal = runif(nb_data, 0.1, 0.7),
+    amplitude = runif(nb_data, 0.1, 1),
     import_param = runif(nb_data, 0, 15)
   )
   params$sampling_proba <- rep(0.02, nb_data)
@@ -128,16 +135,12 @@ generate_faster <- function(nb_data, first){
     }
 
   ind <- sapply(trees, isFALSE)
-  
-  print(paste(nrow(params[!ind,]), "valid params!"))
-  print(paste(length(trees[!ind]), "valid trees"))
 
   write.tree(phy=trees[!ind], file=paste(path, "Trees.newick", sep="/"), append=!first)
-  print(paste("forest size", length(trees)))
+  print(paste(length(trees[!ind]), "valid trees"))
   write.table(params[!ind, ], paste(path,"params.csv", sep="/"), append=!first, row.names=FALSE, col.names=first)
-  print(paste("num params:", nrow(params)))
+  print(paste(nrow(params[!ind,]), "valid params!"))
 
 }
-start = Sys.time()
-generate_faster(nb_data=8000, first=FALSE)
-print(Sys.time()-start)
+
+generate_faster(nb_data=80000, first=FALSE)
